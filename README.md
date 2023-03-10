@@ -4,7 +4,7 @@
 
 NFC_relocalization is Lidar-base Large-scale Global Place Recognition and Relocalization method by estimate 6-DOF transform
 
-### Enviroment setup
+## Enviroment setup
 
 NFC_relocalization is based on [LCDnet]. If you want to use NFC_relocalization, you can use LCDnet's docker or this way
 
@@ -26,11 +26,11 @@ KITTI_ROOT is your download place the KITTI dataset
 
 
 
-### Ground Plane Removal
+## Ground Plane Removal
 
 You can use Ground Plane Removal remove_ground_plane_kitti oin data_process. However, for better results, we recommend using [patchwork++](https://github.com/url-kaist/patchwork-plusplus).
 
-### Training
+## Training
 The training script is not support to parallel GPU learning. During training, you can only use one GPU.
 
 To train on the KITTI dataset:
