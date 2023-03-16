@@ -1,5 +1,7 @@
 # NFC_relocalization
 
+contributed by Kyeongsu Kang, Minjae Lee, Hyeonwoo Yu at the UNIST.
+
 ### **This is a prototype version and will be updated to a more user-friendly version for future execution.**
 
 NFC_relocalization is Lidar-base Large-scale Global Place Recognition and Relocalization method by estimate 6-DOF transform
