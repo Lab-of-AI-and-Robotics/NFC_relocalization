@@ -9,7 +9,7 @@ import torch.nn.parallel
 import torch.utils.data
 from pcdet.datasets.kitti.kitti_dataset import KittiDataset
 import random
-os.environ["CUDA_VISIBLE_DEVICES"]= '0'
+# os.environ["CUDA_VISIBLE_DEVICES"]= '1'
 from scipy.spatial import KDTree
 from torch.utils.data.sampler import Sampler, BatchSampler
 from tqdm import tqdm
@@ -146,7 +146,7 @@ def main_process(gpu, weights_path, args):
                                                 without_ground=args.without_ground)
     else:
         dataset_for_recall = KITTI3603DPoses(args.root_folder, sequences_validation[0],
-                                             train=False, loop_file='loop_GT_4m_noneg',
+                                             train=False, loop_file=exp_cfg['loop_file'],
                                              remove_random_angle=args.remove_random_angle,
                                              without_ground=args.without_ground)
 
@@ -181,7 +181,7 @@ def main_process(gpu, weights_path, args):
                                                collate_fn=merge_inputs,
                                                pin_memory=True)
 
-    model = get_model(exp_cfg)
+    model = get_model(exp_cfg, False)
 
     renamed_dict = OrderedDict()
     for key in saved_params['state_dict']:

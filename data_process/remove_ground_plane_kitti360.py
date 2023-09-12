@@ -35,7 +35,7 @@ for sequence in ["2013_05_28_drive_0000_sync", "2013_05_28_drive_0002_sync",
         i = 0
         while np.argmax(plane_model[:-1]) != 2:
             i += 1
-            pcd = pcd.select_down_sample(inliers, invert=True)
+            pcd = pcd.select_by_index(inliers, invert=True)
             plane_model, inliers = pcd.segment_plane(distance_threshold=0.2,
                                                      ransac_n=3,
                                                      num_iterations=10000)

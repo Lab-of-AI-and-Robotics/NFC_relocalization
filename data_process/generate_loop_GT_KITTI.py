@@ -76,7 +76,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     base_dir = args.root_folder
-    for sequence in ["00", "03", "04", "05", "06", "07", "08", "09"]:
+    for sequence in ["00", "05", "06", "07", "08", "09"]:
         poses_file = base_dir + "/sequences/" + sequence + "/poses.txt"
 
         dataset = KITTILoader3DPosesOnlyLoopPositives(base_dir, sequence, poses_file, 4, 10, [6, 10])

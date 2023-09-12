@@ -1,0 +1,5 @@
+checkpoints/*
+!checkpoints/.keep
+wandb/*
+!wandb/.keep
+kitti/*

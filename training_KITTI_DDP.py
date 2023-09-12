@@ -3,6 +3,8 @@ import os
 import time
 from functools import partial
 from shutil import copy2
+import warnings
+warnings.filterwarnings('ignore')
 
 import yaml
 import wandb
@@ -14,10 +16,10 @@ import torch.utils.data
 from pcdet.datasets.kitti.kitti_dataset import KittiDataset
 import random
 from torch.nn.parallel import DistributedDataParallel
-os.environ["CUDA_VISIBLE_DEVICES"]= '0'
+# os.environ["CUDA_VISIBLE_DEVICES"]= '0'
 from datasets.KITTI360Dataset import KITTI3603DDictPairs, KITTI3603DPoses
 from datasets.KITTIDataset import KITTILoader3DPoses, KITTILoader3DDictPairs
-from loss import TripletLoss, sinkhorn_matches_loss, pose_loss, sinkhorn_matches_ac_ne2po_ne_loss ,sinkhorn_matches_ac2po_ne_loss, sinkhorn_matches_ac_ne2po_loss
+from loss import TripletLoss, sinkhorn_matches_mask_loss, pose_loss, pose_loss_unmask, sinkhorn_matches_loss
 
 from models.get_models import get_model
 from triple_selector import hardest_negative_selector, random_negative_selector, \
@@ -65,16 +67,15 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
 
         anchor_transl = sample['anchor_pose'].to(device)
         positive_transl = sample['positive_pose'].to(device)
-        #negative_transl = sample['negative_pose'].to(device)
         anchor_rot = sample['anchor_rot'].to(device)
         positive_rot = sample['positive_rot'].to(device)
-        #negative_rot = sample['negative_rot'].to(device)
+
 
         anchor_list = []
         positive_list = []
 
         delta_pose = []
-        #ramda_pose = []
+
         for i in range(anchor_transl.shape[0]):
             anchor = sample['anchor'][i].to(device)
             positive = sample['positive'][i].to(device)
@@ -85,8 +86,7 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
             anchor_rot_i = anchor_rot[i]
             positive_transl_i = positive_transl[i]
             positive_rot_i = positive_rot[i]
-            #negative_transl_i = negative_transl[i]
-            #negative_rot_i = negative_rot[i]
+
 
             anchor_i_reflectance = anchor_i[:, 3].clone()
             positive_i_reflectance = positive_i[:, 3].clone()
@@ -95,8 +95,10 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
 
             rt_anchor = get_rt_matrix(anchor_transl_i, anchor_rot_i, rot_parmas='xyz')
             rt_positive = get_rt_matrix(positive_transl_i, positive_rot_i, rot_parmas='xyz')
-            #rt_negative = get_rt_matrix(negative_transl_i, negative_rot_i, rot_parmas='xyz')
-
+            
+            # print('anchor1')
+            # print(anchor_i.shape)
+            # print(anchor_i)
             if exp_cfg['point_cloud_augmentation']:
 
                 rotz = np.random.rand() * 360 - 180
@@ -113,7 +115,9 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
                 anchor_i = rt_anch_augm.inverse() @ anchor_i.T
                 anchor_i = anchor_i.T
                 anchor_i[:, 3] = anchor_i_reflectance.clone()
-
+                # print('anchor2')
+                # print(anchor_i.shape)
+                # print(anchor_i)
                 rotz = np.random.rand() * 360 - 180
                 rotz = rotz * (3.141592 / 180.0)
 
@@ -131,10 +135,8 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
 
                 rt_anch_concat = rt_anchor @ rt_anch_augm
                 rt_pos_concat = rt_positive @ rt_pos_augm
-                #rt_neg_concat = rt_negative @ rt_pos_augm
 
                 rt_anchor2positive = rt_anch_concat.inverse() @ rt_pos_concat
-                #rt_anchor2negative = rt_anch_concat.inverse() @ rt_neg_concat
                 ext = mat2xyzrpy(rt_anchor2positive)
 
             else:
@@ -144,10 +146,8 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
             positive_list.append(model.module.backbone.prepare_input(positive_i))
             del anchor_i, positive_i
             delta_pose.append(rt_anchor2positive.unsqueeze(0))
-            #ramda_pose.append(rt_anchor2negative.unsqueeze(0))
 
         delta_pose = torch.cat(delta_pose)
-        #ramda_pose = torch.cat(ramda_pose)
 
         model_in = KittiDataset.collate_batch(anchor_list + positive_list)
         for key, val in model_in.items():
@@ -170,28 +170,35 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
 
         if exp_cfg['weight_rot'] > 0.:
             if exp_cfg['sinkhorn_aux_loss']:
-                aux_loss = sinkhorn_matches_loss(batch_dict, delta_pose, mode=mode)
-                #aux_ac_ne2po_ne_loss = sinkhorn_matches_ac_ne2po_ne_loss(batch_dict, delta_pose, mode=mode)
-                #aux_ac_ne2po_loss = sinkhorn_matches_ac_ne2po_loss(batch_dict, delta_pose, mode=mode)
-                #aux_ac2po_ne_loss = sinkhorn_matches_ac2po_ne_loss(batch_dict, delta_pose, mode=mode)
+                aux_loss = sinkhorn_matches_mask_loss(batch_dict, delta_pose, mode=mode)
+                aux_loss_unmask = sinkhorn_matches_loss(batch_dict, delta_pose, mode=mode)
+                # aux_ac_ne2po_loss, aux_ac2po_ne_loss, aux_ac_ne2po_ne_loss = sinkhorn_distance_loss(batch_dict)
+
             else:
                 aux_loss = torch.tensor([0.], device=device)
             loss_rot = pose_loss(batch_dict, delta_pose, mode=mode)
-            #loss_neg_rot = pose_negative_loss(batch_dict, ramda_pose, mode=mode)
+            loss_rot_unmask = pose_loss_unmask(batch_dict, delta_pose, mode=mode)
             if exp_cfg['sinkhorn_type'] == 'rpm':
                 inlier_loss = (1 - batch_dict['transport'].sum(dim=1)).mean()
                 inlier_loss += (1 - batch_dict['transport'].sum(dim=2)).mean()
                 loss_rot += 0.01 * inlier_loss
 
-            total_loss = total_loss + exp_cfg['weight_rot']*(loss_rot + 0.05*aux_loss)
-            #total_loss = total_loss + exp_cfg['weight_rot']*(loss_rot + 0.05*aux_loss - 0.05*aux_ac_ne2po_ne_loss)
-            #total_loss = total_loss + exp_cfg['weight_rot']*(loss_rot + 0.05*aux_loss - 0.01*aux_ac_ne2po_loss - 0.01*aux_ac2po_ne_loss)
+            # print(aux_loss)
+            total_loss = total_loss + exp_cfg['weight_rot']*(loss_rot_unmask + 0.05*aux_loss)
+            # total_loss = total_loss + exp_cfg['weight_rot']*(loss_rot_unmask + 0.05*aux_loss_unmask)
+            # total_loss = total_loss + exp_cfg['weight_rot']*((loss_rot + 0.05*aux_loss) + 0.4*(loss_rot_unmask + 0.05*aux_loss_unmask))
+            # total_loss = total_loss + exp_cfg['weight_rot']*(  0.1*0.05*aux_loss_unmask + loss_rot_unmask + 0.9*0.05*aux_loss)
+            # filename = 'loss.txt'
+            # file = open(filename, 'a')
+            # file.write('loss : ')
+            # file.write(str(total_loss)+'\n') 
+            # file.close()
         else:
             loss_rot = torch.tensor([0.], device=device)
 
         if exp_cfg['weight_metric_learning'] > 0.:
             if exp_cfg['norm_embeddings']:
-                model_out = model_out / model_out.norm(dim=1, keepdim=True)
+                model_out = model_out / model_out.norm(dim=1, keepdim=True) 
 
             pos_mask = torch.zeros((model_out.shape[0], model_out.shape[0]), device=device)
 
@@ -199,15 +206,13 @@ def train(model, optimizer, sample, loss_fn, exp_cfg, device, mode='pairs'):
             for i in range(batch_size):
                 pos_mask[i, i+batch_size] = 1
                 pos_mask[i+batch_size, i] = 1
-            #print(pos_mask)
-            #print(neg_mask)
             loss_metric_learning = loss_fn(model_out, pos_mask, neg_mask) * exp_cfg['weight_metric_learning']
             total_loss = total_loss + loss_metric_learning
 
         total_loss.backward()
         optimizer.step()
 
-        return total_loss, loss_rot, loss_transl
+        return total_loss, loss_rot_unmask, loss_transl
 
 
 def test(model, sample, exp_cfg, device):
@@ -575,115 +580,115 @@ def main_process(gpu, exp_cfg, common_seed, world_size, args):
         emb_list = []
 
         # Testing
-        if exp_cfg['weight_rot'] > 0:
-            for batch_idx, sample in enumerate(TestLoader):
-                start_time = time.time()
-                _, transl_error, yaw_error = test(model, sample, exp_cfg, device)
-                dist.barrier()
-                dist.reduce(transl_error, 0)
-                dist.reduce(yaw_error, 0)
-                if rank == 0:
-                    transl_error = (transl_error / world_size).item()
-                    yaw_error = (yaw_error / world_size).item()
-                    transl_error_sum += transl_error
-                    yaw_error_sum += yaw_error
-                    local_iter += 1
+        # if exp_cfg['weight_rot'] > 0:
+        #     for batch_idx, sample in enumerate(TestLoader):
+        #         start_time = time.time()
+        #         _, transl_error, yaw_error = test(model, sample, exp_cfg, device)
+        #         dist.barrier()
+        #         dist.reduce(transl_error, 0)
+        #         dist.reduce(yaw_error, 0)
+        #         if rank == 0:
+        #             transl_error = (transl_error / world_size).item()
+        #             yaw_error = (yaw_error / world_size).item()
+        #             transl_error_sum += transl_error
+        #             yaw_error_sum += yaw_error
+        #             local_iter += 1
 
-                    if batch_idx % 20 == 0 and batch_idx != 0:
-                        print('Iter %d time = %.2f' % (batch_idx,
-                                                       time.time() - start_time))
-                        local_iter = 0.
+        #             if batch_idx % 20 == 0 and batch_idx != 0:
+        #                 print('Iter %d time = %.2f' % (batch_idx,
+        #                                                time.time() - start_time))
+        #                 local_iter = 0.
 
-        if exp_cfg['weight_metric_learning'] > 0.:
-            for batch_idx, sample in enumerate(RecallLoader):
-                emb = get_database_embs(model, sample, exp_cfg, device)
-                dist.barrier()
-                out_emb = [torch.zeros_like(emb) for _ in range(world_size)]
-                dist.all_gather(out_emb, emb)
+        # if exp_cfg['weight_metric_learning'] > 0.:
+        #     for batch_idx, sample in enumerate(RecallLoader):
+        #         emb = get_database_embs(model, sample, exp_cfg, device)
+        #         dist.barrier()
+        #         out_emb = [torch.zeros_like(emb) for _ in range(world_size)]
+        #         dist.all_gather(out_emb, emb)
 
-                if rank == 0:
-                    interleaved_out = torch.empty((emb.shape[0]*world_size, emb.shape[1]),
-                                                  device=emb.device, dtype=emb.dtype)
-                    for current_rank in range(world_size):
-                        interleaved_out[current_rank::world_size] = out_emb[current_rank]
-                    emb_list.append(interleaved_out.detach().clone())
+        #         if rank == 0:
+        #             interleaved_out = torch.empty((emb.shape[0]*world_size, emb.shape[1]),
+        #                                           device=emb.device, dtype=emb.dtype)
+        #             for current_rank in range(world_size):
+        #                 interleaved_out[current_rank::world_size] = out_emb[current_rank]
+        #             emb_list.append(interleaved_out.detach().clone())
 
         if rank == 0:
-            if exp_cfg['weight_metric_learning'] > 0.:
-                emb_list = torch.cat(emb_list)
-                emb_list = emb_list[:len(dataset_for_recall)]
-                recall, maxF1, auc, auc2 = evaluate_model_with_emb(emb_list, dataset_list_valid, positive_distance)
-            final_transl_error = transl_error_sum / len(TestLoader)
-            final_yaw_error = yaw_error_sum / len(TestLoader)
+            # if exp_cfg['weight_metric_learning'] > 0.:
+            #     emb_list = torch.cat(emb_list)
+            #     emb_list = emb_list[:len(dataset_for_recall)]
+            #     recall, maxF1, auc, auc2 = evaluate_model_with_emb(emb_list, dataset_list_valid, positive_distance)
+            # final_transl_error = transl_error_sum / len(TestLoader)
+            # final_yaw_error = yaw_error_sum / len(TestLoader)
 
-            if args.wandb:
-                if exp_cfg['weight_rot'] > 0.:
-                    wandb.log({"Rotation Loss": (total_rot_loss / len(train_sampler)),
-                               "Rotation Mean Error": final_yaw_error}, commit=False)
-                wandb.log({"Translation Loss": (total_transl_loss / len(train_sampler)),
-                           "Translation Error": final_transl_error}, commit=False)
-                if exp_cfg['weight_metric_learning'] > 0.:
-                    wandb.log({"Validation Recall @ 1": recall[0],
-                               "Validation Recall @ 5": recall[4],
-                               "Validation Recall @ 10": recall[9],
-                               "Max F1": maxF1,
-                               "AUC": auc2}, commit=False)
-                wandb.log({"Training Loss": (total_train_loss / len(train_sampler))})
+            # if args.wandb:
+            #     if exp_cfg['weight_rot'] > 0.:
+            #         wandb.log({"Rotation Loss": (total_rot_loss / len(train_sampler)),
+            #                    "Rotation Mean Error": final_yaw_error}, commit=False)
+            #     wandb.log({"Translation Loss": (total_transl_loss / len(train_sampler)),
+            #                "Translation Error": final_transl_error}, commit=False)
+            #     if exp_cfg['weight_metric_learning'] > 0.:
+            #         wandb.log({"Validation Recall @ 1": recall[0],
+            #                    "Validation Recall @ 5": recall[4],
+            #                    "Validation Recall @ 10": recall[9],
+            #                    "Max F1": maxF1,
+            #                    "AUC": auc2}, commit=False)
+            #     wandb.log({"Training Loss": (total_train_loss / len(train_sampler))})
 
-            print("------------------------------------")
-            if exp_cfg['weight_metric_learning'] > 0.:
-                print("Recall@k:")
-                print(recall)
-                print("Max F1: ", maxF1)
-                print("AUC: ", auc2)
-            print("Translation Error: ", final_transl_error)
-            print("Rotation Error: ", final_yaw_error)
-            print("------------------------------------")
+            # print("------------------------------------")
+            # if exp_cfg['weight_metric_learning'] > 0.:
+            #     print("Recall@k:")
+            #     print(recall)
+            #     print("Max F1: ", maxF1)
+            #     print("AUC: ", auc2)
+            # print("Translation Error: ", final_transl_error)
+            # print("Rotation Error: ", final_yaw_error)
+            # print("------------------------------------")
 
-            if final_yaw_error < best_rot_error:
-                best_rot_error = final_yaw_error
+            # if final_yaw_error < best_rot_error:
+            #     best_rot_error = final_yaw_error
                 
-                savefilename = f'{final_dest}/checkpoint_{epoch}_rot_{final_yaw_error:.3f}.tar'
-                best_model = {
-                    'config': exp_cfg,
-                    'epoch': epoch,
-                    'state_dict': model.module.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    "Rotation Mean Error": final_yaw_error
-                }
-                torch.save(best_model, savefilename)
-                if old_saved_file is not None:
-                    os.remove(old_saved_file)
-                if args.wandb:
-                    wandb.run.summary["best_rot_error"] = final_yaw_error
-                    temp = f'{final_dest}/best_model_so_far_rot.tar'
-                    torch.save(best_model, temp)
-                    wandb.save(temp)
-                old_saved_file = savefilename
+            #     savefilename = f'{final_dest}/checkpoint_{epoch}_rot_{final_yaw_error:.3f}.tar'
+            #     best_model = {
+            #         'config': exp_cfg,
+            #         'epoch': epoch,
+            #         'state_dict': model.module.state_dict(),
+            #         'optimizer': optimizer.state_dict(),
+            #         "Rotation Mean Error": final_yaw_error
+            #     }
+            #     torch.save(best_model, savefilename)
+            #     if old_saved_file is not None:
+            #         os.remove(old_saved_file)
+            #     if args.wandb:
+            #         wandb.run.summary["best_rot_error"] = final_yaw_error
+            #         temp = f'{final_dest}/best_model_so_far_rot.tar'
+            #         torch.save(best_model, temp)
+            #         wandb.save(temp)
+            #     old_saved_file = savefilename
 
-            if exp_cfg['weight_metric_learning'] > 0.:
-                if auc2 > max_auc:
-                    max_auc = auc2
-                    savefilename_auc = f'{final_dest}/checkpoint_{epoch}_auc_{max_auc:.3f}.tar'
-                    best_model_auc = {
-                        'epoch': epoch,
-                        'config': exp_cfg,
-                        'state_dict': model.module.state_dict(),
-                        'recall@1': recall[0],
-                        'max_F1': maxF1,
-                        'AUC': auc2,
-                        'optimizer': optimizer.state_dict(),
-                    }
-                    torch.save(best_model_auc, savefilename_auc)
-                    if old_saved_file_auc is not None:
-                        os.remove(old_saved_file_auc)
-                    old_saved_file_auc = savefilename_auc
-                    if args.wandb:
-                        wandb.run.summary["best_auc"] = max_auc
+            # if exp_cfg['weight_metric_learning'] > 0.:
+            #     if auc2 > max_auc:
+            #         max_auc = auc2
+            #         savefilename_auc = f'{final_dest}/checkpoint_{epoch}_auc_{max_auc:.3f}.tar'
+            #         best_model_auc = {
+            #             'epoch': epoch,
+            #             'config': exp_cfg,
+            #             'state_dict': model.module.state_dict(),
+            #             'recall@1': recall[0],
+            #             'max_F1': maxF1,
+            #             'AUC': auc2,
+            #             'optimizer': optimizer.state_dict(),
+            #         }
+            #         torch.save(best_model_auc, savefilename_auc)
+            #         if old_saved_file_auc is not None:
+            #             os.remove(old_saved_file_auc)
+            #         old_saved_file_auc = savefilename_auc
+            #         if args.wandb:
+            #             wandb.run.summary["best_auc"] = max_auc
 
-                        temp = f'{final_dest}/best_model_so_far_auc.tar'
-                        torch.save(best_model_auc, temp)
-                        wandb.save(temp)
+            #             temp = f'{final_dest}/best_model_so_far_auc.tar'
+            #             torch.save(best_model_auc, temp)
+            #             wandb.save(temp)
 
             savefilename = f'{final_dest}/checkpoint_last_iter.tar'
             best_model = {
@@ -693,8 +698,8 @@ def main_process(gpu, exp_cfg, common_seed, world_size, args):
                 'optimizer': optimizer.state_dict(),
             }
             torch.save(best_model, savefilename)
-            if (epoch % 20) == 0:
-                savefile20 = f'{final_dest}/{epoch}_rot_{final_yaw_error:.3f}.tar'
+            if (epoch % 5) == 0:
+                savefile20 = f'{final_dest}/{epoch}_rot_.tar'
                 best_model = {
                     'config': exp_cfg,
                     'epoch': epoch,

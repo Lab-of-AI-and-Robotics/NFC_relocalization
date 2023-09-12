@@ -30,7 +30,7 @@ KITTI_ROOT is your download place the KITTI dataset
 
 ## Ground Plane Removal
 
-You can use Ground Plane Removal remove_ground_plane_kitti oin data_process. However, for better results, we recommend using [patchwork++](https://github.com/url-kaist/patchwork-plusplus).
+You can use Ground Plane Removal remove_ground_plane_kitti.py in data_process. However, for better results, we recommend using [patchwork++](https://github.com/url-kaist/patchwork-plusplus).
 
 ## Training
 The training script is not support to parallel GPU learning. During training, you can only use one GPU.

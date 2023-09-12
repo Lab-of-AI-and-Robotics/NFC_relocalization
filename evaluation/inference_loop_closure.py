@@ -12,7 +12,7 @@ import torch.nn.parallel
 import torch.utils.data
 from pcdet.datasets.kitti.kitti_dataset import KittiDataset
 import random
-os.environ["CUDA_VISIBLE_DEVICES"]= '0'
+# os.environ["CUDA_VISIBLE_DEVICES"]= '0'
 from sklearn.metrics import precision_recall_curve, average_precision_score , auc
 from sklearn.neighbors import KDTree
 from torch.utils.data.sampler import Sampler, BatchSampler
@@ -212,6 +212,7 @@ def main_process(gpu, weights_path, args):
     print(weights_path)
     print(validation_sequences)
     print("Protocol 1 - Average Precision", ap_ours_fp)
+
     
     marker = 'x'
     markevery = 0.03

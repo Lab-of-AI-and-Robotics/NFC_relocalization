@@ -15,10 +15,11 @@ import utils.rotation_conversion as RT
 
 def get_velo(idx, dir, sequence, jitter=False, remove_random_angle=-1, without_ground=False):
     if without_ground:
-        velo_path = os.path.join(dir, 'sequences', f'{int(sequence):02d}','velodyne_no_ground', f'{idx:06d}.npy')
-        #velo_path = os.path.join(dir, 'sequences', f'{int(sequence):02d}','velodyne_no_ground_patchwork', f'{idx:06d}.npy')
+        velo_path = os.path.join(dir, 'sequences', f'{int(sequence):02d}','velodyne_no_ground_patchwork', f'{idx:06d}.npy')
+        # velo_path = os.path.join(dir, 'sequences', f'{int(sequence):02d}','genarative_velodyne', f'{idx:06d}.npy')
         with h5py.File(velo_path, 'r') as hf:
-            scan = hf['PC'][:]
+            # scan = hf['PC'][:]
+            scan = hf['PC'][:].astype('float32')
     else:
         velo_path = os.path.join(dir, 'sequences', f'{int(sequence):02d}', 'velodyne', f'{idx:06d}.bin')
         scan = np.fromfile(velo_path, dtype=np.float32)
